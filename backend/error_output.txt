@@ -1,0 +1,39 @@
+[dotenv@17.3.1] injecting env (1) from .env -- tip: 🛡️ auth for agents: https://vestauth.com
+{"level":30,"time":1772263967710,"pid":15920,"hostname":"idhanth-Lap","msg":"Server listening at http://0.0.0.0:3001"}
+Server listening on ${(server.server.address() as any).port}
+Client connected: hx3gmKVpIPKLCuzIAAAB
+Deepgram Error: {
+  error: DeepgramWebSocketError: Received network error or non-101 status code.
+      at ListenLiveClient.createEnhancedError (C:\idhanth\FlashPoint\backend\node_modules\@deepgram\sdk\src\packages\AbstractLiveClient.ts:416:27)
+      at WebSocket.conn.onerror (C:\idhanth\FlashPoint\backend\node_modules\@deepgram\sdk\src\packages\AbstractLiveClient.ts:511:36)
+      at WebSocket.[nodejs.internal.kHybridDispatch] (node:internal/event_target:827:20)
+      at WebSocket.dispatchEvent (node:internal/event_target:762:26)
+      at fireEvent (node:internal/deps/undici/undici:11663:14)
+      at failWebsocketConnection (node:internal/deps/undici/undici:11744:9)
+      at Object.processResponse (node:internal/deps/undici/undici:11958:13)
+      at node:internal/deps/undici/undici:10735:23
+      at node:internal/process/task_queues:151:7
+      at AsyncResource.runInAsyncScope (node:async_hooks:214:14) {
+    __dgError: true,
+    originalEvent: ErrorEvent {
+      type: 'error',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 9599.4426
+    },
+    statusCode: undefined,
+    requestId: undefined,
+    responseHeaders: undefined,
+    url: 'wss://api.deepgram.com/v1/listen?model=nova-3&language=en&smart_format=true&interim_results=true&encoding=webm_opus',
+    readyState: 0
+  },
+  statusCode: undefined,
+  requestId: undefined,
+  responseHeaders: undefined,
+  url: 'wss://api.deepgram.com/v1/listen?model=nova-3&language=en&smart_format=true&interim_results=true&encoding=webm_opus',
+  readyState: 0,
+  message: 'Received network error or non-101 status code. (Ready State: CONNECTING, URL: wss://api.deepgram.com/v1/listen?model=nova-3&language=en&smart_format=true&interim_results=true&encoding=webm_opus)',
+  [Symbol(type)]: 'error',
+  [Symbol(kTarget)]: WebSocket {},
+  [Symbol(kIsBeingDispatched)]: true
+}
