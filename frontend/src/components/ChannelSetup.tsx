@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useAppStore, useActiveChannel } from '@/lib/store';
-import { Plus, X, Upload, Mic, ArrowLeft } from 'lucide-react';
+import { Plus, X, Upload, Mic, ArrowLeft, Youtube } from 'lucide-react';
 
-export function ChannelSetup({ onStartLive, onUpload }: { onStartLive: () => void, onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void }) {
+export function ChannelSetup({ onStartLive, onUpload, onStartYouTube }: { onStartLive: () => void, onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void, onStartYouTube: (url: string) => void }) {
     const channel = useActiveChannel();
     const addKeyword = useAppStore(state => state.addKeyword);
     const removeKeyword = useAppStore(state => state.removeKeyword);
     const setActiveChannel = useAppStore(state => state.setActiveChannel);
     const [newKeyword, setNewKeyword] = useState('');
+    const [ytUrl, setYtUrl] = useState('');
 
     if (!channel) return null;
 
@@ -79,7 +80,7 @@ export function ChannelSetup({ onStartLive, onUpload }: { onStartLive: () => voi
                     <h2 className="text-xl font-semibold text-zinc-100 mb-4">2. Audio Input</h2>
                     <p className="text-sm text-zinc-400 mb-6">Choose how you want to process audio for this channel.</p>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                         <label className="flex flex-col items-center justify-center p-8 bg-zinc-950 border border-zinc-800 rounded-xl hover:border-zinc-700 hover:bg-zinc-900/50 cursor-pointer transition-all group">
                             <Upload size={32} className="text-zinc-500 group-hover:text-blue-400 mb-4 transition-colors" />
                             <span className="font-medium text-zinc-100 mb-1">Upload File</span>
@@ -93,8 +94,29 @@ export function ChannelSetup({ onStartLive, onUpload }: { onStartLive: () => voi
                         >
                             <Mic size={32} className="text-zinc-500 group-hover:text-red-400 mb-4 transition-colors" />
                             <span className="font-medium text-zinc-100 mb-1">Live Stream</span>
-                            <span className="text-xs text-zinc-500">Microphone input</span>
+                            <span className="text-xs text-zinc-500">Microphone & Camera</span>
                         </button>
+
+                        <div className="flex flex-col items-center justify-center p-4 bg-zinc-950 border border-zinc-800 rounded-xl hover:border-zinc-700 hover:bg-zinc-900/50 transition-all group relative">
+                            <span className="font-medium text-zinc-100 mb-2">YouTube Live</span>
+                            <div className="flex w-full gap-2">
+                                <input
+                                    type="text"
+                                    placeholder="Paste URL..."
+                                    value={ytUrl}
+                                    onChange={(e) => setYtUrl(e.target.value)}
+                                    className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-red-500"
+                                />
+                            </div>
+                            <button
+                                onClick={() => onStartYouTube(ytUrl)}
+                                disabled={!ytUrl.trim()}
+                                className="mt-3 flex items-center justify-center gap-2 w-full py-1.5 bg-red-600 hover:bg-red-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white rounded-lg transition-colors text-xs font-medium"
+                            >
+                                <Youtube size={14} />
+                                Start Stream
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

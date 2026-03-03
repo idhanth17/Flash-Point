@@ -8,13 +8,16 @@ import { WaveformVisualizer } from '@/components/WaveformVisualizer';
 import { ChannelList } from '@/components/ChannelList';
 import { ChannelSetup } from '@/components/ChannelSetup';
 import { useAppStore, useActiveChannel } from '@/lib/store';
-import { Mic, Square, Upload, ArrowLeft, Trash2 } from 'lucide-react';
+import { Mic, Square, Upload, ArrowLeft, Trash2, Youtube, Video, VideoOff } from 'lucide-react';
 
 export default function Home() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [status, setStatus] = useState('Disconnected');
+  const [isVideoEnabled, setIsVideoEnabled] = useState(true);
+  const [activeYtUrl, setActiveYtUrl] = useState('');
+  const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
 
   const activeChannelId = useAppStore(state => state.activeChannelId);
@@ -35,6 +38,7 @@ export default function Home() {
 
     newSocket.on('connect', () => setStatus('Connected to Server'));
     newSocket.on('deepgram_ready', () => setStatus('ASR Engine Ready (Nova-3)'));
+    newSocket.on('asr_error', (msg) => { alert("Error: " + msg); setStatus('Error'); stopRecording(); });
     newSocket.on('disconnect', () => setStatus('Disconnected'));
 
     return () => {
@@ -42,15 +46,31 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    if (stream) {
+      stream.getVideoTracks().forEach(track => {
+        track.enabled = isVideoEnabled;
+      });
+    }
+  }, [isVideoEnabled, stream]);
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+    }
+  }, [stream]);
+
   const startRecording = async () => {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert("Your browser does not support audio recording or you are not on a secure (HTTPS) connection.");
+        alert("Your browser does not support media recording or you are not on a secure (HTTPS) connection.");
         return;
       }
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoEnabled });
       setStream(mediaStream);
-      const recorder = new MediaRecorder(mediaStream, { mimeType: 'audio/webm' });
+
+      const audioStream = new MediaStream([mediaStream.getAudioTracks()[0]]);
+      const recorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm' });
 
       recorder.addEventListener('dataavailable', async (event) => {
         if (event.data.size > 0 && socket?.connected) {
@@ -79,10 +99,25 @@ export default function Home() {
   const stopRecording = () => {
     if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
       mediaRecorder.current.stop();
-      mediaRecorder.current.stream.getTracks().forEach(track => track.stop());
+    }
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+    if (activeYtUrl) {
+      socket?.emit('stop_stream');
     }
     setIsRecording(false);
     setStream(null);
+    setActiveYtUrl('');
+  };
+
+  const handleStartYouTube = (url: string) => {
+    if (!url) return;
+    setActiveYtUrl(url);
+    setStatus('Connecting to YouTube...');
+    socket?.emit('start_youtube_stream', url);
+    setIsRecording(true);
+    setHasAudio(true);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -112,17 +147,25 @@ export default function Home() {
       });
 
       if (!res.ok) {
-        throw new Error("Upload failed on server");
+        let errDetails = "Upload failed on server";
+        try {
+          const errJson = await res.json();
+          errDetails = errJson.details || errJson.error || errDetails;
+          if (errJson.rawError) {
+            errDetails += "\n\n" + JSON.stringify(errJson.rawError, null, 2);
+          }
+        } catch (e) { }
+        throw new Error(errDetails);
       }
 
       const json = await res.json();
       setStatus(`File uploaded. Size: ${json.size} bytes. (Backend simulation complete)`);
       setHasAudio(true);
       // alert("File successfully uploaded to the local backend stream handler!");
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
       setStatus('Upload failed');
-      alert("There was an error uploading the file. Is the backend running?");
+      alert("Error uploading file: " + (err.message || err));
     }
   };
 
@@ -137,7 +180,7 @@ export default function Home() {
   if (channel && !channel.hasAudio) {
     return (
       <div className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden font-sans">
-        <ChannelSetup onStartLive={startRecording} onUpload={handleFileUpload} />
+        <ChannelSetup onStartLive={startRecording} onUpload={handleFileUpload} onStartYouTube={handleStartYouTube} />
       </div>
     );
   }
@@ -178,12 +221,21 @@ export default function Home() {
             </button>
 
             {!isRecording && (
-              <label className="flex items-center gap-2 px-4 py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg cursor-pointer transition-colors text-sm font-medium whitespace-nowrap">
-                <Upload size={16} />
-                <span className="hidden sm:inline">Upload</span>
-                <input type="file" accept="audio/*" className="hidden" onChange={handleFileUpload} />
-              </label>
+              <form onSubmit={(e) => { e.preventDefault(); handleStartYouTube((e.target as any).yt.value); }} className="hidden xl:flex items-center gap-2">
+                <input name="yt" type="text" placeholder="YouTube URL..." className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-red-500 w-32 focus:w-48 transition-all" />
+                <button type="submit" className="p-1.5 bg-zinc-900 hover:bg-red-900/40 text-zinc-400 hover:text-red-500 border border-zinc-800 rounded-lg transition-colors">
+                  <Youtube size={16} />
+                </button>
+              </form>
             )}
+
+            <button
+              onClick={() => setIsVideoEnabled(!isVideoEnabled)}
+              className={`flex items-center justify-center p-2 rounded-lg transition-colors border ${isVideoEnabled ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}
+              title={isVideoEnabled ? "Disable Camera" : "Enable Camera"}
+            >
+              {isVideoEnabled ? <Video size={16} /> : <VideoOff size={16} />}
+            </button>
 
             {!isRecording ? (
               <button
@@ -191,7 +243,7 @@ export default function Home() {
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors text-sm font-medium shadow-[0_0_15px_rgba(37,99,235,0.3)] whitespace-nowrap"
               >
                 <Mic size={16} />
-                <span className="hidden sm:inline">Stream</span>
+                <span className="hidden sm:inline">Stream Local</span>
               </button>
             ) : (
               <button
@@ -199,14 +251,21 @@ export default function Home() {
                 className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors text-sm font-medium shadow-[0_0_15px_rgba(220,38,38,0.3)] animate-pulse whitespace-nowrap"
               >
                 <Square size={16} fill="currentColor" />
-                <span className="hidden sm:inline">Stop</span>
+                <span className="hidden sm:inline">Stop Streaming</span>
               </button>
             )}
           </div>
         </header>
 
         {/* Main Waterfall */}
-        <TranscriptWaterfall socket={socket} />
+        <div className="flex-1 w-full relative flex max-h-[calc(100vh-80px)]">
+          {stream && isVideoEnabled && (
+            <div className="absolute top-4 right-4 w-64 aspect-video bg-black rounded-lg overflow-hidden border border-zinc-800 shadow-2xl z-20">
+              <video ref={videoRef} autoPlay muted playsInline style={{ transform: 'scaleX(-1)' }} className="w-full h-full object-cover" />
+            </div>
+          )}
+          <TranscriptWaterfall socket={socket} />
+        </div>
 
         {/* Footer Visualizer Area */}
         <div className="w-full max-w-4xl p-6 absolute bottom-0 z-50 pointer-events-none pb-12">

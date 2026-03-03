@@ -11,34 +11,57 @@ export class ASREngine {
     private socket: Socket;
     private cumulativeTimeOffset: number;
     private audioBuffer: Buffer[] = [];
+    private dgOptions: any;
+    private keepAliveInterval: ReturnType<typeof setInterval> | null = null;
 
-    constructor(socket: Socket, cumulativeTimeOffset: number = 0) {
+    constructor(socket: Socket, cumulativeTimeOffset: number = 0, options: any = {}) {
         this.socket = socket;
         this.cumulativeTimeOffset = cumulativeTimeOffset;
+        this.dgOptions = options;
         this.initializeDeepgram();
+    }
+
+    private stopKeepAlive() {
+        if (this.keepAliveInterval) {
+            clearInterval(this.keepAliveInterval);
+            this.keepAliveInterval = null;
+        }
     }
 
     private initializeDeepgram() {
         if (!deepgramApiKey) {
-            console.warn("DEEPGRAM_API_KEY is not set. Deepgram ASREngine will not function.");
+            console.warn("DEEPGRAM_API_KEY is not set.");
             return;
         }
 
         const deepgram = createClient(deepgramApiKey);
 
-        // Create live connection
+        // IMPORTANT: Use lowercase 'keepalive' with string value 'true'.
+        // This is what Deepgram accepts as a URL query param (?keepalive=true).
+        // Capital 'keepAlive' gets serialized differently and causes connection rejection.
         this.deepgramLive = deepgram.listen.live({
             model: "nova-3",
             language: "en",
             smart_format: true,
-            interim_results: true
+            interim_results: true,
+            keepalive: "true",
+            ...this.dgOptions
         });
 
         let streamStartTime: number | null = null;
+
         this.deepgramLive.on("open", () => {
             console.log("Deepgram connection opened for socket:", this.socket.id);
             streamStartTime = Date.now();
             this.socket.emit("deepgram_ready");
+
+            // Send KeepAlive pings every 10s to prevent Deepgram's 60s idle timeout.
+            // deepgramLive.keepAlive() sends: {"type": "KeepAlive"} over the WebSocket.
+            this.keepAliveInterval = setInterval(() => {
+                if (this.deepgramLive && this.deepgramLive.getReadyState() === 1) {
+                    this.deepgramLive.keepAlive();
+                }
+            }, 10000);
 
             // Flush any buffered audio chunks
             while (this.audioBuffer.length > 0) {
@@ -56,7 +79,6 @@ export class ASREngine {
             const words = data.channel.alternatives[0].words;
 
             if (transcript && transcript.length > 0) {
-                // Prioritize Deepgram's exact audio-relative timestamp from the word data
                 let streamTime = 0;
                 if (words && words.length > 0 && typeof words[0].start === 'number') {
                     streamTime = words[0].start;
@@ -64,7 +86,7 @@ export class ASREngine {
                     streamTime = (Date.now() - streamStartTime) / 1000;
                 }
 
-                let timestamp = streamTime + this.cumulativeTimeOffset;
+                const timestamp = streamTime + this.cumulativeTimeOffset;
                 this.socket.emit("transcript", {
                     text: transcript,
                     isFinal,
@@ -77,17 +99,18 @@ export class ASREngine {
 
         this.deepgramLive.on("error", (error: any) => {
             console.error("Deepgram Error:", error);
+            this.stopKeepAlive();
             this.socket.emit("asr_error", "Deepgram processing error");
         });
 
         this.deepgramLive.on("close", () => {
             console.log("Deepgram connection closed");
+            this.stopKeepAlive();
         });
     }
 
     public processAudioStream(data: ArrayBuffer) {
         if (this.deepgramLive && this.deepgramLive.getReadyState() === 1) {
-            // Convert ArrayBuffer to Buffer for Deepgram WebSocket
             this.deepgramLive.send(Buffer.from(data) as any);
         } else if (this.deepgramLive) {
             this.audioBuffer.push(Buffer.from(data));
@@ -95,6 +118,7 @@ export class ASREngine {
     }
 
     public close() {
+        this.stopKeepAlive();
         if (this.deepgramLive) {
             this.deepgramLive.requestClose();
             this.deepgramLive = null;

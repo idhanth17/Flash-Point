@@ -133,7 +133,18 @@ export const useAppStore = create<AppState>()(
                 return {
                     channels: state.channels.map(c => {
                         if (c.id === state.activeChannelId) {
-                            return { ...c, transcripts: [...c.transcripts, transcript].slice(-50000) };
+                            const transcripts = [...c.transcripts];
+                            const lastIdx = transcripts.length - 1;
+
+                            if (!transcript.isFinal && lastIdx >= 0 && !transcripts[lastIdx].isFinal) {
+                                // Replace the last interim entry in-place (smooth typing effect)
+                                transcripts[lastIdx] = transcript;
+                            } else {
+                                // Append finals, or the very first interim
+                                transcripts.push(transcript);
+                            }
+
+                            return { ...c, transcripts: transcripts.slice(-50000) };
                         }
                         return c;
                     })
