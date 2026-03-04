@@ -158,8 +158,9 @@ export default function Home() {
   const setActiveChannel = useAppStore(state => state.setActiveChannel);
 
   useEffect(() => {
-    const host = window.location.hostname;
-    const newSocket = io(`http://${host}:3001`, {
+    // Use NEXT_PUBLIC_BACKEND_URL in production (set on Vercel), fallback to localhost for dev
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || `http://${window.location.hostname}:3001`;
+    const newSocket = io(backendUrl, {
       transports: ['websocket', 'polling']
     });
     setSocket(newSocket);
@@ -280,15 +281,13 @@ export default function Home() {
     formData.append('file', file);
 
     try {
-      const host = window.location.hostname;
-      const protocol = window.location.protocol;
-      const baseUrl = protocol === 'https:' ? `https://${host}:3003` : `http://${host}:3001`;
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || `http://${window.location.hostname}:3001`;
 
       const currentChannel = useAppStore.getState().channels.find(c => c.id === activeChannelId);
       const lastTranscript = currentChannel?.transcripts?.[currentChannel.transcripts.length - 1];
       const offset = lastTranscript ? lastTranscript.timestamp + 1 : 0;
 
-      const res = await fetch(`${baseUrl}/upload`, {
+      const res = await fetch(`${backendUrl}/upload`, {
         method: 'POST',
         headers: {
           ...(socket?.id ? { 'x-socket-id': socket.id } : {}),

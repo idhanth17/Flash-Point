@@ -348,8 +348,9 @@ server.ready().then(() => {
 
 const start = async () => {
     try {
-        await server.listen({ port: 3001, host: '0.0.0.0' });
-        console.log(`Server listening on \${(server.server.address() as any).port}`);
+        const port = parseInt(process.env.PORT || '3001', 10);
+        await server.listen({ port, host: '0.0.0.0' });
+        console.log(`Server listening on ${(server.server.address() as any).port}`);
     } catch (err) {
         server.log.error(err);
         process.exit(1);
