@@ -159,7 +159,7 @@ export default function Home() {
 
   useEffect(() => {
     // Use NEXT_PUBLIC_BACKEND_URL in production (set on Vercel), fallback to localhost for dev
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || `http://${window.location.hostname}:3001`;
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/+$/, '') || `http://${window.location.hostname}:3001`;
     const newSocket = io(backendUrl, {
       transports: ['websocket', 'polling']
     });
@@ -281,7 +281,7 @@ export default function Home() {
     formData.append('file', file);
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || `http://${window.location.hostname}:3001`;
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/+$/, '') || `http://${window.location.hostname}:3001`;
 
       const currentChannel = useAppStore.getState().channels.find(c => c.id === activeChannelId);
       const lastTranscript = currentChannel?.transcripts?.[currentChannel.transcripts.length - 1];
