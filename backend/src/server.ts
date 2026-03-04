@@ -224,13 +224,18 @@ server.ready().then(() => {
                         if (clients.length === 0) { onFail(); return; }
                         const client = clients[0];
                         console.log(`[YouTube] Trying player_client=${client} for URL extraction...`);
-                        execFile(binPath, [
+
+                        const args = [
                             '-f', 'bestaudio[protocol=m3u8_native]/bestaudio[protocol=m3u8]/bestaudio/best',
                             '-g',
                             '--no-playlist',
-                            '--extractor-args', `youtube:player_client=${client}`,
                             url
-                        ], { timeout: 20000 }, (err: any, stdout: string) => {
+                        ];
+                        if (client !== 'default') {
+                            args.push('--extractor-args', `youtube:player_client=${client}`);
+                        }
+
+                        execFile(binPath, args, { timeout: 20000 }, (err: any, stdout: string) => {
                             const extracted = stdout?.trim().split('\n')[0];
                             if (!err && extracted) {
                                 onSuccess(extracted);
@@ -241,7 +246,7 @@ server.ready().then(() => {
                         });
                     };
 
-                    tryExtract(['android', 'mweb', 'android_creator'], (hlsUrl) => {
+                    tryExtract(['default', 'android', 'mweb'], (hlsUrl) => {
                         console.log('[YouTube] Got URL, starting ffmpeg direct HLS stream (low latency)...');
                         ffmpegProc = spawn(ffmpegStatic as string, [
                             '-fflags', '+nobuffer+discardcorrupt',
@@ -278,19 +283,19 @@ server.ready().then(() => {
                         '-f', 'bestaudio/best',
                         '-o', '-',
                         '--no-playlist',
-                        '--no-part',
                         '--quiet',
+                        '--extractor-args', 'youtube:player_client=default',
                         url
                     ]);
 
                     ffmpegProc = spawn(ffmpegStatic as string, [
                         '-fflags', '+nobuffer',
-                        '-probesize', '1M',
+                        '-probesize', '5M',
+                        '-analyzeduration', '5M',
                         '-i', 'pipe:0',
                         '-f', 's16le',
                         '-ar', '16000',
                         '-ac', '1',
-                        '-flush_packets', '1',
                         'pipe:1'
                     ]);
 
