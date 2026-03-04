@@ -241,14 +241,23 @@ server.ready().then(() => {
                         if (asrEngine) asrEngine.processAudioStream(chunk as any);
                     });
 
-                    ytdlpProc.stderr.on('data', (d: Buffer) => console.error('[yt-dlp fallback]', d.toString()));
+                    ytdlpProc.stderr.on('data', (d: Buffer) => {
+                        const msg = d.toString();
+                        console.error('[yt-dlp pipe]', msg);
+                        if (msg.includes('ERROR') || msg.includes('HTTP Error 403') || msg.includes('Sign in')) {
+                            socket.emit('asr_error', 'YouTube blocked extraction: ' + msg.substring(0, 100));
+                        }
+                    });
                     ytdlpProc.on('error', (err: any) => {
                         console.error('[yt-dlp fallback] failed to start:', err.message);
                         socket.emit('asr_error', 'YouTube extractor failed to start. ' + err.message);
                     });
                     ytdlpProc.on('close', () => { try { ffmpegProc?.stdin?.end(); } catch (_) { } });
 
-                    ffmpegProc.on('error', (err: any) => console.error('[ffmpeg fallback] error:', err.message));
+                    ffmpegProc.on('error', (err: any) => {
+                        console.error('[ffmpeg pipe] error:', err.message);
+                        socket.emit('asr_error', 'FFmpeg failed: ' + err.message);
+                    });
                     ffmpegProc.on('close', (code: number) => console.log(`[ffmpeg fallback] Exited ${code}`));
                 };
 
