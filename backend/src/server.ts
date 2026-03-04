@@ -12,10 +12,11 @@ import os from 'os';
 import { randomUUID } from 'crypto';
 import { PassThrough } from 'stream';
 
-import ffmpegStatic from 'ffmpeg-static';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+const ffmpegPath = ffmpegInstaller.path;
 
-if (ffmpegStatic) {
-    ffmpeg.setFfmpegPath(ffmpegStatic);
+if (ffmpegPath) {
+    ffmpeg.setFfmpegPath(ffmpegPath);
 }
 
 declare module 'fastify' {
@@ -221,12 +222,12 @@ server.ready().then(() => {
                         '-o', '-',
                         '--no-playlist',
                         '--quiet',
-                        '--ffmpeg-location', ffmpegStatic as string,
+                        '--ffmpeg-location', ffmpegPath,
                         '--extractor-args', 'youtube:player_client=default',
                         url
                     ]);
 
-                    ffmpegProc = spawn(ffmpegStatic as string, [
+                    ffmpegProc = spawn(ffmpegPath, [
                         '-fflags', '+nobuffer',
                         '-probesize', '5M',
                         '-analyzeduration', '5M',
