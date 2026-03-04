@@ -213,71 +213,8 @@ server.ready().then(() => {
 
                 const binPath = path.join(os.tmpdir(), binName);
 
-                const startStream = () => {
-                    const { execFile } = require('child_process');
-
-                    // Try multiple player clients in order.
-                    // android: no JS, no PO token — gives direct dash/hls URLs for most videos
-                    // mweb: mobile web client, no JS needed, often works for live streams
-                    // If all fail, fall back to the pipe approach which works but has ~2s delay
-                    const tryExtract = (clients: string[], onSuccess: (hlsUrl: string) => void, onFail: () => void) => {
-                        if (clients.length === 0) { onFail(); return; }
-                        const client = clients[0];
-                        console.log(`[YouTube] Trying player_client=${client} for URL extraction...`);
-
-                        const args = [
-                            '-f', 'bestaudio[protocol=m3u8_native]/bestaudio[protocol=m3u8]/bestaudio/best',
-                            '-g',
-                            '--no-playlist',
-                            url
-                        ];
-                        if (client !== 'default') {
-                            args.push('--extractor-args', `youtube:player_client=${client}`);
-                        }
-
-                        execFile(binPath, args, { timeout: 20000 }, (err: any, stdout: string) => {
-                            const extracted = stdout?.trim().split('\n')[0];
-                            if (!err && extracted) {
-                                onSuccess(extracted);
-                            } else {
-                                console.log(`[YouTube] ${client} failed, trying next...`);
-                                tryExtract(clients.slice(1), onSuccess, onFail);
-                            }
-                        });
-                    };
-
-                    tryExtract(['default', 'android', 'mweb'], (hlsUrl) => {
-                        console.log('[YouTube] Got URL, starting ffmpeg direct HLS stream (low latency)...');
-                        ffmpegProc = spawn(ffmpegStatic as string, [
-                            '-fflags', '+nobuffer+discardcorrupt',
-                            '-flags', '+low_delay',
-                            '-live_start_index', '-1',
-                            '-i', hlsUrl,
-                            '-f', 's16le',
-                            '-ar', '16000',
-                            '-ac', '1',
-                            '-flush_packets', '1',
-                            'pipe:1'
-                        ]);
-                        ffmpegProc.stdout.on('data', (chunk: Buffer) => {
-                            if (asrEngine) asrEngine.processAudioStream(chunk as any);
-                        });
-                        ffmpegProc.stderr.on('data', (d: Buffer) => {
-                            const msg = d.toString();
-                            if (msg.includes('Error') && !msg.includes('non monotonous')) console.error('[ffmpeg]', msg.trim());
-                        });
-                        ffmpegProc.on('error', (err: any) => {
-                            if (!err.message?.includes('SIGKILL')) console.error('[ffmpeg] error:', err.message);
-                        });
-                        ffmpegProc.on('close', (code: number) => console.log(`[ffmpeg] Exited ${code}`));
-                    }, () => {
-                        // All URL extraction attempts failed — fall back to pipe approach
-                        startStreamFallback();
-                    });
-                };
-
                 // Fallback: pipe yt-dlp output through ffmpeg (used if iOS URL extraction fails)
-                const startStreamFallback = () => {
+                const startStream = () => {
                     console.log('[YouTube] Falling back to yt-dlp pipe approach...');
                     ytdlpProc = spawn(binPath, [
                         '-f', 'bestaudio/best',
