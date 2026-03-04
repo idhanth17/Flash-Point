@@ -28,7 +28,8 @@ const server = fastify({ logger: true });
 
 server.register(cors, {
     origin: "*",
-    methods: ["GET", "POST", "OPTIONS"]
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "x-socket-id", "x-time-offset", "Authorization"]
 });
 
 server.register(fastifySocketIO, {

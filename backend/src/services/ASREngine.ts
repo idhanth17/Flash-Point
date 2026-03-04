@@ -30,7 +30,8 @@ export class ASREngine {
 
     private initializeDeepgram() {
         if (!deepgramApiKey) {
-            console.warn("DEEPGRAM_API_KEY is not set.");
+            console.error("[ASREngine] DEEPGRAM_API_KEY is not set on the server!");
+            this.socket.emit("asr_error", "Server misconfiguration: DEEPGRAM_API_KEY is missing. Please set it in Railway environment variables.");
             return;
         }
 
