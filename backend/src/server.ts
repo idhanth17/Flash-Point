@@ -12,12 +12,7 @@ import os from 'os';
 import { randomUUID } from 'crypto';
 import { PassThrough } from 'stream';
 
-import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
-const ffmpegPath = ffmpegInstaller.path;
-
-if (ffmpegPath) {
-    ffmpeg.setFfmpegPath(ffmpegPath);
-}
+// Rely on system-installed fluent-ffmpeg which leverages Nixpacks apt natively
 
 declare module 'fastify' {
     interface FastifyInstance {
@@ -216,11 +211,10 @@ server.ready().then(() => {
                         '-o', '-',
                         '--no-playlist',
                         '--quiet',
-                        '--ffmpeg-location', ffmpegPath,
                         '--extractor-args', 'youtube:player_client=default'
                     ], { shell: true });
 
-                    ffmpegProc = spawn(ffmpegPath, [
+                    ffmpegProc = spawn('ffmpeg', [
                         '-fflags', '+nobuffer',
                         '-probesize', '5M',
                         '-analyzeduration', '5M',
