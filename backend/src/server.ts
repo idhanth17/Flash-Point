@@ -205,7 +205,11 @@ server.ready().then(() => {
             let ytdlpProc: any = null;
             let ffmpegProc: any = null;
 
-            const binName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+            let binName = 'yt-dlp';
+            if (process.platform === 'win32') binName = 'yt-dlp.exe';
+            else if (process.platform === 'darwin') binName = 'yt-dlp_macos';
+            else binName = 'yt-dlp_linux'; // Railway uses linux, we need the standalone binary (no python)
+
             const binPath = path.join(os.tmpdir(), binName);
 
             const startStream = () => {
@@ -293,8 +297,15 @@ server.ready().then(() => {
                 ffmpegProc.stdout.on('data', (chunk: Buffer) => {
                     if (asrEngine) asrEngine.processAudioStream(chunk as any);
                 });
-                ytdlpProc.stderr.on('data', (d: Buffer) => console.error('[yt-dlp]', d.toString()));
+
+                ytdlpProc.stderr.on('data', (d: Buffer) => console.error('[yt-dlp fallback]', d.toString()));
+                ytdlpProc.on('error', (err: any) => {
+                    console.error('[yt-dlp fallback] failed to start:', err.message);
+                    socket.emit('asr_error', 'YouTube extractor failed to start. ' + err.message);
+                });
                 ytdlpProc.on('close', () => { try { ffmpegProc?.stdin?.end(); } catch (_) { } });
+
+                ffmpegProc.on('error', (err: any) => console.error('[ffmpeg fallback] error:', err.message));
                 ffmpegProc.on('close', (code: number) => console.log(`[ffmpeg fallback] Exited ${code}`));
             };
 
