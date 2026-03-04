@@ -193,158 +193,177 @@ server.ready().then(() => {
         });
 
         socket.on('start_youtube_stream', async (url: string) => {
-            console.log("Starting YouTube Stream for URL:", url);
-            if (asrEngine) {
-                asrEngine.close();
-            }
-            // Pass encoding so Deepgram knows the raw PCM format from ffmpeg
-            asrEngine = new ASREngine(socket, 0, { encoding: 'linear16', sample_rate: 16000, channels: 1 });
+            try {
+                console.log("Starting YouTube Stream for URL:", url);
+                if (asrEngine) {
+                    asrEngine.close();
+                }
+                // Pass encoding so Deepgram knows the raw PCM format from ffmpeg
+                asrEngine = new ASREngine(socket, 0, { encoding: 'linear16', sample_rate: 16000, channels: 1 });
 
-            const { spawn } = require('child_process');
-            const https = require('https');
-            let ytdlpProc: any = null;
-            let ffmpegProc: any = null;
+                const { spawn } = require('child_process');
+                const https = require('https');
+                let ytdlpProc: any = null;
+                let ffmpegProc: any = null;
 
-            let binName = 'yt-dlp';
-            if (process.platform === 'win32') binName = 'yt-dlp.exe';
-            else if (process.platform === 'darwin') binName = 'yt-dlp_macos';
-            else binName = 'yt-dlp_linux'; // Railway uses linux, we need the standalone binary (no python)
+                let binName = 'yt-dlp';
+                if (process.platform === 'win32') binName = 'yt-dlp.exe';
+                else if (process.platform === 'darwin') binName = 'yt-dlp_macos';
+                else binName = 'yt-dlp_linux'; // Railway uses linux, we need the standalone binary (no python)
 
-            const binPath = path.join(os.tmpdir(), binName);
+                const binPath = path.join(os.tmpdir(), binName);
 
-            const startStream = () => {
-                const { execFile } = require('child_process');
+                const startStream = () => {
+                    const { execFile } = require('child_process');
 
-                // Try multiple player clients in order.
-                // android: no JS, no PO token — gives direct dash/hls URLs for most videos
-                // mweb: mobile web client, no JS needed, often works for live streams
-                // If all fail, fall back to the pipe approach which works but has ~2s delay
-                const tryExtract = (clients: string[], onSuccess: (hlsUrl: string) => void, onFail: () => void) => {
-                    if (clients.length === 0) { onFail(); return; }
-                    const client = clients[0];
-                    console.log(`[YouTube] Trying player_client=${client} for URL extraction...`);
-                    execFile(binPath, [
-                        '-f', 'bestaudio[protocol=m3u8_native]/bestaudio[protocol=m3u8]/bestaudio/best',
-                        '-g',
-                        '--no-playlist',
-                        '--extractor-args', `youtube:player_client=${client}`,
-                        url
-                    ], { timeout: 20000 }, (err: any, stdout: string) => {
-                        const extracted = stdout?.trim().split('\n')[0];
-                        if (!err && extracted) {
-                            onSuccess(extracted);
-                        } else {
-                            console.log(`[YouTube] ${client} failed, trying next...`);
-                            tryExtract(clients.slice(1), onSuccess, onFail);
-                        }
+                    // Try multiple player clients in order.
+                    // android: no JS, no PO token — gives direct dash/hls URLs for most videos
+                    // mweb: mobile web client, no JS needed, often works for live streams
+                    // If all fail, fall back to the pipe approach which works but has ~2s delay
+                    const tryExtract = (clients: string[], onSuccess: (hlsUrl: string) => void, onFail: () => void) => {
+                        if (clients.length === 0) { onFail(); return; }
+                        const client = clients[0];
+                        console.log(`[YouTube] Trying player_client=${client} for URL extraction...`);
+                        execFile(binPath, [
+                            '-f', 'bestaudio[protocol=m3u8_native]/bestaudio[protocol=m3u8]/bestaudio/best',
+                            '-g',
+                            '--no-playlist',
+                            '--extractor-args', `youtube:player_client=${client}`,
+                            url
+                        ], { timeout: 20000 }, (err: any, stdout: string) => {
+                            const extracted = stdout?.trim().split('\n')[0];
+                            if (!err && extracted) {
+                                onSuccess(extracted);
+                            } else {
+                                console.log(`[YouTube] ${client} failed, trying next...`);
+                                tryExtract(clients.slice(1), onSuccess, onFail);
+                            }
+                        });
+                    };
+
+                    tryExtract(['android', 'mweb', 'android_creator'], (hlsUrl) => {
+                        console.log('[YouTube] Got URL, starting ffmpeg direct HLS stream (low latency)...');
+                        ffmpegProc = spawn(ffmpegStatic as string, [
+                            '-fflags', '+nobuffer+discardcorrupt',
+                            '-flags', '+low_delay',
+                            '-live_start_index', '-1',
+                            '-i', hlsUrl,
+                            '-f', 's16le',
+                            '-ar', '16000',
+                            '-ac', '1',
+                            '-flush_packets', '1',
+                            'pipe:1'
+                        ]);
+                        ffmpegProc.stdout.on('data', (chunk: Buffer) => {
+                            if (asrEngine) asrEngine.processAudioStream(chunk as any);
+                        });
+                        ffmpegProc.stderr.on('data', (d: Buffer) => {
+                            const msg = d.toString();
+                            if (msg.includes('Error') && !msg.includes('non monotonous')) console.error('[ffmpeg]', msg.trim());
+                        });
+                        ffmpegProc.on('error', (err: any) => {
+                            if (!err.message?.includes('SIGKILL')) console.error('[ffmpeg] error:', err.message);
+                        });
+                        ffmpegProc.on('close', (code: number) => console.log(`[ffmpeg] Exited ${code}`));
+                    }, () => {
+                        // All URL extraction attempts failed — fall back to pipe approach
+                        startStreamFallback();
                     });
                 };
 
-                tryExtract(['android', 'mweb', 'android_creator'], (hlsUrl) => {
-                    console.log('[YouTube] Got URL, starting ffmpeg direct HLS stream (low latency)...');
+                // Fallback: pipe yt-dlp output through ffmpeg (used if iOS URL extraction fails)
+                const startStreamFallback = () => {
+                    console.log('[YouTube] Falling back to yt-dlp pipe approach...');
+                    ytdlpProc = spawn(binPath, [
+                        '-f', 'bestaudio/best',
+                        '-o', '-',
+                        '--no-playlist',
+                        '--no-part',
+                        '--quiet',
+                        url
+                    ]);
+
                     ffmpegProc = spawn(ffmpegStatic as string, [
-                        '-fflags', '+nobuffer+discardcorrupt',
-                        '-flags', '+low_delay',
-                        '-live_start_index', '-1',
-                        '-i', hlsUrl,
+                        '-fflags', '+nobuffer',
+                        '-probesize', '1M',
+                        '-i', 'pipe:0',
                         '-f', 's16le',
                         '-ar', '16000',
                         '-ac', '1',
                         '-flush_packets', '1',
                         'pipe:1'
                     ]);
+
+                    ytdlpProc.stdout.pipe(ffmpegProc.stdin);
                     ffmpegProc.stdout.on('data', (chunk: Buffer) => {
                         if (asrEngine) asrEngine.processAudioStream(chunk as any);
                     });
-                    ffmpegProc.stderr.on('data', (d: Buffer) => {
-                        const msg = d.toString();
-                        if (msg.includes('Error') && !msg.includes('non monotonous')) console.error('[ffmpeg]', msg.trim());
+
+                    ytdlpProc.stderr.on('data', (d: Buffer) => console.error('[yt-dlp fallback]', d.toString()));
+                    ytdlpProc.on('error', (err: any) => {
+                        console.error('[yt-dlp fallback] failed to start:', err.message);
+                        socket.emit('asr_error', 'YouTube extractor failed to start. ' + err.message);
                     });
-                    ffmpegProc.on('error', (err: any) => {
-                        if (!err.message?.includes('SIGKILL')) console.error('[ffmpeg] error:', err.message);
-                    });
-                    ffmpegProc.on('close', (code: number) => console.log(`[ffmpeg] Exited ${code}`));
-                }, () => {
-                    // All URL extraction attempts failed — fall back to pipe approach
-                    startStreamFallback();
-                });
-            };
+                    ytdlpProc.on('close', () => { try { ffmpegProc?.stdin?.end(); } catch (_) { } });
 
-            // Fallback: pipe yt-dlp output through ffmpeg (used if iOS URL extraction fails)
-            const startStreamFallback = () => {
-                console.log('[YouTube] Falling back to yt-dlp pipe approach...');
-                ytdlpProc = spawn(binPath, [
-                    '-f', 'bestaudio/best',
-                    '-o', '-',
-                    '--no-playlist',
-                    '--no-part',
-                    '--quiet',
-                    url
-                ]);
-
-                ffmpegProc = spawn(ffmpegStatic as string, [
-                    '-fflags', '+nobuffer',
-                    '-probesize', '1M',
-                    '-i', 'pipe:0',
-                    '-f', 's16le',
-                    '-ar', '16000',
-                    '-ac', '1',
-                    '-flush_packets', '1',
-                    'pipe:1'
-                ]);
-
-                ytdlpProc.stdout.pipe(ffmpegProc.stdin);
-                ffmpegProc.stdout.on('data', (chunk: Buffer) => {
-                    if (asrEngine) asrEngine.processAudioStream(chunk as any);
-                });
-
-                ytdlpProc.stderr.on('data', (d: Buffer) => console.error('[yt-dlp fallback]', d.toString()));
-                ytdlpProc.on('error', (err: any) => {
-                    console.error('[yt-dlp fallback] failed to start:', err.message);
-                    socket.emit('asr_error', 'YouTube extractor failed to start. ' + err.message);
-                });
-                ytdlpProc.on('close', () => { try { ffmpegProc?.stdin?.end(); } catch (_) { } });
-
-                ffmpegProc.on('error', (err: any) => console.error('[ffmpeg fallback] error:', err.message));
-                ffmpegProc.on('close', (code: number) => console.log(`[ffmpeg fallback] Exited ${code}`));
-            };
-
-            // Download yt-dlp binary if not already cached
-            if (!fs.existsSync(binPath)) {
-                console.log('[yt-dlp] Downloading binary (one-time)...');
-                const dlUrl = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${binName}`;
-                const fileStream = fs.createWriteStream(binPath);
-                const doDownload = (redirectUrl: string) => {
-                    https.get(redirectUrl, (res: any) => {
-                        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                            doDownload(res.headers.location);
-                            return;
-                        }
-                        res.pipe(fileStream);
-                        fileStream.on('finish', () => {
-                            fileStream.close();
-                            fs.chmodSync(binPath, 0o755);
-                            console.log('[yt-dlp] Binary ready.');
-                            startStream();
-                        });
-                    }).on('error', (e: any) => {
-                        try { fs.unlinkSync(binPath); } catch (_) { }
-                        console.error('[yt-dlp] Download failed:', e.message);
-                        socket.emit('asr_error', 'Failed to download yt-dlp: ' + e.message);
-                    });
+                    ffmpegProc.on('error', (err: any) => console.error('[ffmpeg fallback] error:', err.message));
+                    ffmpegProc.on('close', (code: number) => console.log(`[ffmpeg fallback] Exited ${code}`));
                 };
-                doDownload(dlUrl);
-            } else {
-                startStream();
+
+                // Download yt-dlp binary if not already cached
+                if (!fs.existsSync(binPath)) {
+                    console.log('[yt-dlp] Downloading binary (one-time)...');
+                    const dlUrl = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${binName}`;
+                    const fileStream = fs.createWriteStream(binPath);
+                    const doDownload = (redirectUrl: string) => {
+                        https.get(redirectUrl, (res: any) => {
+                            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                                doDownload(res.headers.location);
+                                return;
+                            }
+                            res.pipe(fileStream);
+                            fileStream.on('finish', () => {
+                                // Only chmod and start after the stream is fully closed to OS
+                                fileStream.close(async () => {
+                                    try {
+                                        // Verify we downloaded a binary, not a 404 HTML page
+                                        const stats = await fs.promises.stat(binPath);
+                                        if (stats.size < 1000000) { // yt-dlp is around 30MB
+                                            throw new Error("Downloaded file is too small, likely a 404 page");
+                                        }
+
+                                        fs.chmodSync(binPath, 0o755);
+                                        console.log('[yt-dlp] Binary ready.');
+                                        startStream();
+                                    } catch (e: any) {
+                                        console.error('[yt-dlp] Error finishing download:', e);
+                                        try { fs.unlinkSync(binPath); } catch (_) { }
+                                        socket.emit('asr_error', 'Failed to install stream extractor: ' + e.message);
+                                    }
+                                });
+                            });
+                        }).on('error', (e: any) => {
+                            try { fs.unlinkSync(binPath); } catch (_) { }
+                            console.error('[yt-dlp] Download failed:', e.message);
+                            socket.emit('asr_error', 'Failed to download yt-dlp: ' + e.message);
+                        });
+                    };
+                    doDownload(dlUrl);
+                } else {
+                    startStream();
+                }
+
+                const cleanup = () => {
+                    try { ytdlpProc?.kill('SIGKILL'); } catch (_) { }
+                    try { ffmpegProc?.kill('SIGKILL'); } catch (_) { }
+                };
+
+                socket.on('stop_stream', cleanup);
+                socket.on('disconnect', cleanup);
+            } catch (globalErr: any) {
+                console.error("[start_youtube_stream] FATAL ERROR:", globalErr);
+                socket.emit("asr_error", "Internal server error starting stream: " + globalErr.message);
             }
-
-            const cleanup = () => {
-                try { ytdlpProc?.kill('SIGKILL'); } catch (_) { }
-                try { ffmpegProc?.kill('SIGKILL'); } catch (_) { }
-            };
-
-            socket.on('stop_stream', cleanup);
-            socket.on('disconnect', cleanup);
         });
 
         socket.on('audio_chunk', (audioData: ArrayBuffer) => {
