@@ -221,6 +221,7 @@ server.ready().then(() => {
                         '-o', '-',
                         '--no-playlist',
                         '--quiet',
+                        '--ffmpeg-location', ffmpegStatic as string,
                         '--extractor-args', 'youtube:player_client=default',
                         url
                     ]);
