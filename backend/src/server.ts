@@ -24,7 +24,10 @@ declare module 'fastify' {
     }
 }
 
-const server = fastify({ logger: true });
+const server = fastify({
+    logger: true,
+    bodyLimit: 500 * 1024 * 1024 // 500MB global limit to match multipart
+});
 
 server.register(cors, {
     origin: "*",
