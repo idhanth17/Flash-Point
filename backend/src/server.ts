@@ -207,13 +207,10 @@ server.ready().then(() => {
                 let ytdlpProc: any = null;
                 let ffmpegProc: any = null;
 
-                const ytDlpWrap = new YTDlpWrap();
-
-                // Fallback: pipe yt-dlp output through ffmpeg (used if iOS URL extraction fails)
                 const startStream = () => {
-                    console.log('[YouTube] Starting yt-dlp-wrap pipe approach...');
+                    console.log('[YouTube] Starting yt-dlp pipe approach...');
 
-                    ytdlpProc = ytDlpWrap.exec([
+                    ytdlpProc = spawn(binPath, [
                         url,
                         '-f', 'bestaudio/best',
                         '-o', '-',
@@ -221,7 +218,7 @@ server.ready().then(() => {
                         '--quiet',
                         '--ffmpeg-location', ffmpegPath,
                         '--extractor-args', 'youtube:player_client=default'
-                    ]);
+                    ], { shell: true });
 
                     ffmpegProc = spawn(ffmpegPath, [
                         '-fflags', '+nobuffer',
@@ -234,7 +231,11 @@ server.ready().then(() => {
                         'pipe:1'
                     ]);
 
+                    ytdlpProc.stdout.on('error', (err: any) => console.error('yt-dlp stdout pipe error', err));
+                    ffmpegProc.stdin.on('error', (err: any) => console.error('ffmpeg stdin pipe error', err));
+
                     ytdlpProc.stdout.pipe(ffmpegProc.stdin);
+
                     ffmpegProc.stdout.on('data', (chunk: Buffer) => {
                         if (asrEngine) asrEngine.processAudioStream(chunk as any);
                     });
@@ -246,6 +247,7 @@ server.ready().then(() => {
                             socket.emit('asr_error', 'YouTube blocked extraction: ' + msg.substring(0, 100));
                         }
                     });
+
                     ytdlpProc.on('error', (err: any) => {
                         console.error('[yt-dlp fallback] failed to start:', err.message);
                         socket.emit('asr_error', 'YouTube extractor failed to start. ' + err.message);
@@ -259,20 +261,55 @@ server.ready().then(() => {
                     ffmpegProc.on('close', (code: number) => console.log(`[ffmpeg fallback] Exited ${code}`));
                 };
 
-                // Ensure yt-dlp binary exists before starting
-                ytDlpWrap.getVersion().then(() => {
+                let binName = 'yt-dlp';
+                if (process.platform === 'win32') binName = 'yt-dlp.exe';
+                else if (process.platform === 'darwin') binName = 'yt-dlp_macos';
+                else binName = 'yt-dlp_linux';
+
+                const binPath = path.join(os.tmpdir(), binName);
+
+                // Download yt-dlp binary if not already cached
+                if (!fs.existsSync(binPath)) {
+                    console.log('[yt-dlp] Downloading binary (one-time)...');
+                    const dlUrl = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${binName}`;
+                    const fileStream = fs.createWriteStream(binPath);
+                    const doDownload = (redirectUrl: string) => {
+                        https.get(redirectUrl, (res: any) => {
+                            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                                doDownload(res.headers.location);
+                                return;
+                            }
+                            res.pipe(fileStream);
+                            fileStream.on('finish', () => {
+                                // Only chmod and start after the stream is fully closed to OS
+                                fileStream.close(async () => {
+                                    try {
+                                        // Verify we downloaded a binary, not a 404 HTML page
+                                        const stats = await fs.promises.stat(binPath);
+                                        if (stats.size < 1000000) { // yt-dlp is around 30MB
+                                            throw new Error("Downloaded file is too small, likely a 404 page");
+                                        }
+
+                                        fs.chmodSync(binPath, 0o755);
+                                        console.log('[yt-dlp] Binary ready.');
+                                        startStream();
+                                    } catch (e: any) {
+                                        console.error('[yt-dlp] Error finishing download:', e);
+                                        try { fs.unlinkSync(binPath); } catch (_) { }
+                                        socket.emit('asr_error', 'Failed to install stream extractor: ' + e.message);
+                                    }
+                                });
+                            });
+                        }).on('error', (e: any) => {
+                            try { fs.unlinkSync(binPath); } catch (_) { }
+                            console.error('[yt-dlp] Download failed:', e.message);
+                            socket.emit('asr_error', 'Failed to download yt-dlp: ' + e.message);
+                        });
+                    };
+                    doDownload(dlUrl);
+                } else {
                     startStream();
-                }).catch(async (e: any) => {
-                    console.log('[yt-dlp] Downloading binary via wrap (one-time)...');
-                    try {
-                        await YTDlpWrap.downloadFromGithub();
-                        console.log('[yt-dlp] Binary ready.');
-                        startStream();
-                    } catch (dlErr: any) {
-                        console.error('[yt-dlp] Download failed:', dlErr.message);
-                        socket.emit('asr_error', 'Failed to install stream extractor: ' + dlErr.message);
-                    }
-                });
+                }
 
                 const cleanup = () => {
                     try { ytdlpProc?.kill('SIGKILL'); } catch (_) { }
