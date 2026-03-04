@@ -207,24 +207,20 @@ server.ready().then(() => {
                 let ytdlpProc: any = null;
                 let ffmpegProc: any = null;
 
-                let binName = 'yt-dlp';
-                if (process.platform === 'win32') binName = 'yt-dlp.exe';
-                else if (process.platform === 'darwin') binName = 'yt-dlp_macos';
-                else binName = 'yt-dlp_linux'; // Railway uses linux, we need the standalone binary (no python)
-
-                const binPath = path.join(os.tmpdir(), binName);
+                const ytDlpWrap = new YTDlpWrap();
 
                 // Fallback: pipe yt-dlp output through ffmpeg (used if iOS URL extraction fails)
                 const startStream = () => {
-                    console.log('[YouTube] Falling back to yt-dlp pipe approach...');
-                    ytdlpProc = spawn(binPath, [
+                    console.log('[YouTube] Starting yt-dlp-wrap pipe approach...');
+
+                    ytdlpProc = ytDlpWrap.exec([
+                        url,
                         '-f', 'bestaudio/best',
                         '-o', '-',
                         '--no-playlist',
                         '--quiet',
                         '--ffmpeg-location', ffmpegPath,
-                        '--extractor-args', 'youtube:player_client=default',
-                        url
+                        '--extractor-args', 'youtube:player_client=default'
                     ]);
 
                     ffmpegProc = spawn(ffmpegPath, [
@@ -263,48 +259,20 @@ server.ready().then(() => {
                     ffmpegProc.on('close', (code: number) => console.log(`[ffmpeg fallback] Exited ${code}`));
                 };
 
-                // Download yt-dlp binary if not already cached
-                if (!fs.existsSync(binPath)) {
-                    console.log('[yt-dlp] Downloading binary (one-time)...');
-                    const dlUrl = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${binName}`;
-                    const fileStream = fs.createWriteStream(binPath);
-                    const doDownload = (redirectUrl: string) => {
-                        https.get(redirectUrl, (res: any) => {
-                            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                                doDownload(res.headers.location);
-                                return;
-                            }
-                            res.pipe(fileStream);
-                            fileStream.on('finish', () => {
-                                // Only chmod and start after the stream is fully closed to OS
-                                fileStream.close(async () => {
-                                    try {
-                                        // Verify we downloaded a binary, not a 404 HTML page
-                                        const stats = await fs.promises.stat(binPath);
-                                        if (stats.size < 1000000) { // yt-dlp is around 30MB
-                                            throw new Error("Downloaded file is too small, likely a 404 page");
-                                        }
-
-                                        fs.chmodSync(binPath, 0o755);
-                                        console.log('[yt-dlp] Binary ready.');
-                                        startStream();
-                                    } catch (e: any) {
-                                        console.error('[yt-dlp] Error finishing download:', e);
-                                        try { fs.unlinkSync(binPath); } catch (_) { }
-                                        socket.emit('asr_error', 'Failed to install stream extractor: ' + e.message);
-                                    }
-                                });
-                            });
-                        }).on('error', (e: any) => {
-                            try { fs.unlinkSync(binPath); } catch (_) { }
-                            console.error('[yt-dlp] Download failed:', e.message);
-                            socket.emit('asr_error', 'Failed to download yt-dlp: ' + e.message);
-                        });
-                    };
-                    doDownload(dlUrl);
-                } else {
+                // Ensure yt-dlp binary exists before starting
+                ytDlpWrap.getVersion().then(() => {
                     startStream();
-                }
+                }).catch(async (e: any) => {
+                    console.log('[yt-dlp] Downloading binary via wrap (one-time)...');
+                    try {
+                        await YTDlpWrap.downloadFromGithub();
+                        console.log('[yt-dlp] Binary ready.');
+                        startStream();
+                    } catch (dlErr: any) {
+                        console.error('[yt-dlp] Download failed:', dlErr.message);
+                        socket.emit('asr_error', 'Failed to install stream extractor: ' + dlErr.message);
+                    }
+                });
 
                 const cleanup = () => {
                     try { ytdlpProc?.kill('SIGKILL'); } catch (_) { }
