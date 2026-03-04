@@ -121,8 +121,8 @@ server.post('/upload', async (request, reply) => {
 
         if (error) throw error;
 
-        const socketId = request.headers['x-socket-id'] as string;
-        const timeOffsetStr = request.headers['x-time-offset'] as string;
+        const socketId = (request.query as any).socketId as string;
+        const timeOffsetStr = (request.query as any).timeOffset as string;
         const timeOffset = timeOffsetStr ? parseFloat(timeOffsetStr) : 0;
 
         console.log(`[UPLOAD] SocketId target: ${socketId}`);

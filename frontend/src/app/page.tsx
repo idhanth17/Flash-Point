@@ -287,12 +287,13 @@ export default function Home() {
       const lastTranscript = currentChannel?.transcripts?.[currentChannel.transcripts.length - 1];
       const offset = lastTranscript ? lastTranscript.timestamp + 1 : 0;
 
-      const res = await fetch(`${backendUrl}/upload`, {
+      // Pass socketId and offset as query params (not headers) to avoid CORS preflight
+      const uploadUrl = new URL(`${backendUrl}/upload`);
+      if (socket?.id) uploadUrl.searchParams.set('socketId', socket.id);
+      uploadUrl.searchParams.set('timeOffset', offset.toString());
+
+      const res = await fetch(uploadUrl.toString(), {
         method: 'POST',
-        headers: {
-          ...(socket?.id ? { 'x-socket-id': socket.id } : {}),
-          'x-time-offset': offset.toString()
-        },
         body: formData,
       });
 
