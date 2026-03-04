@@ -9,8 +9,9 @@ import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { PassThrough } from 'stream';
+
 import ffmpegStatic from 'ffmpeg-static';
 
 if (ffmpegStatic) {
@@ -63,7 +64,7 @@ server.post('/upload', async (request, reply) => {
         if (data.mimetype.startsWith('video/') || data.filename.endsWith('.mp4') || data.filename.endsWith('.webm') || data.filename.endsWith('.mov')) {
             console.log(`Extracting audio from video file: ${data.filename}`);
 
-            const tempId = uuidv4();
+            const tempId = randomUUID();
             const tempInPath = path.join(os.tmpdir(), `${tempId}_in`);
             const tempOutPath = path.join(os.tmpdir(), `${tempId}_out.mp3`);
 
